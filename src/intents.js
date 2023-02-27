@@ -1,9 +1,6 @@
 const debug = require('debug')('botium-connector-azure-cqa-intents')
 const axios = require('axios')
 const DEFAULT_API_VERSION = require('./connector').DEFAULT_API_VERSION
-const AdmZip = require('adm-zip')
-
-const QNA_FILE_NAME = 'QnAs.tsv'
 
 const axiosCustomError = async (options, msg) => {
   try {
@@ -13,7 +10,8 @@ const axiosCustomError = async (options, msg) => {
   }
 }
 
-const _importIt = async ({ caps }) => {
+const _importIt = async ({ caps, statusCallback = debug }) => {
+  statusCallback('Importing started')
   const requestOptionsImport = {
     url: `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:export?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=json`,
     headers: {
@@ -38,7 +36,7 @@ const _importIt = async ({ caps }) => {
   }
   let resultUrl = null
   let responseImportStatus
-  for (let tries = 0; tries < 30 && !resultUrl; tries++) {
+  for (let tries = 0; tries < 10 * 60 && !resultUrl; tries++) {
     responseImportStatus = await axiosCustomError(requestOptionsImportStatus, 'Import status failed')
     if (responseImportStatus.data.errors?.length > 0) {
       throw new Error(`Import failed: ${JSON.stringify(responseImportStatus.errors)}`)
@@ -50,7 +48,7 @@ const _importIt = async ({ caps }) => {
 
     resultUrl = responseImportStatus.data.resultUrl
     if (!resultUrl) {
-      debug(`Try ${tries + 1} Result URI is not ready yet. Waiting 1s.`)
+      statusCallback(`Try #${tries + 1} done. Result URI is not ready yet. Waiting 1s.`)
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
   }
@@ -60,86 +58,53 @@ const _importIt = async ({ caps }) => {
   const requestOptionsDownload = {
     method: 'get',
     url: resultUrl,
-    // responseType: 'arraybuffer',
     headers: {
       'Ocp-Apim-Subscription-Key': caps.AZURE_CQA_ENDPOINT_KEY
     }
   }
 
   const responseDownload = await axiosCustomError(requestOptionsDownload, 'Download failed')
-  const zip = new AdmZip(responseDownload.data)
-  const qnas = zip.getEntry(QNA_FILE_NAME)?.getData().toString('utf8').trim()
-  if (!qnas) {
-    throw new Error('Not supported zip format')
-  }
 
-  let start = qnas.indexOf('\n')
-  const answerToChatbotStruct = {}
-  const intentToChatbotStruct = {}
-  while (start >= 0) {
-    const end = qnas.indexOf('\n', start + 1)
-    const [question, answer, source, metadata, suggestedQuestions, isContextOnly, prompts, qnaId] = qnas.substring(start, end > 0 ? end : qnas.length).trim().split('\t')
-    start = end
-    if (!answerToChatbotStruct[answer]) {
-      const struct = {
-        answer,
-        source,
-        metadata,
-        suggestedQuestions,
-        isContextOnly,
-        prompts,
-        qnaId,
-        questions: []
-      }
-      answerToChatbotStruct[answer] = struct
-      // first question is the intent
-      intentToChatbotStruct[question] = struct
-    }
-
-    answerToChatbotStruct[answer].questions.push(question)
-  }
-
-  const answers = Object.keys(intentToChatbotStruct).length
-  const questions = Object.values(intentToChatbotStruct).reduce((sum, { questions }) => {
-    sum += questions.length
+  const answers = responseDownload.data.Assets.Qnas.length
+  const questions = responseDownload.data.Assets.Qnas.reduce((sum, { Questions }) => {
+    sum += Questions.length
     return sum
   }, 0)
-  debug(`import succesful, #answers: ${answers}, #questions: ${questions} details: ${Object.values(intentToChatbotStruct).map(({ answer, questions }) => '/"' + answer + '/" (' + questions.length + ')').join(', ')}`)
+  const mapped = responseDownload.data.Assets.Qnas.map(({ Answer, Questions }) => ({ [Answer]: Questions.length }))
+  debug(`Imported #answers: ${answers}, #questions: ${questions} details: ${JSON.stringify(mapped)}`)
 
-  return { answerToChatbotStruct, intentToChatbotStruct, zip }
+  return responseDownload.data
 }
 
 /**
  *
  * @param caps
- * @param dataset - "Train" for training data, or null for all
- * @param language - in "en-us" format, or null for all
  * @returns {Promise<{utterances: *, convos: *}>}
  */
 const importAzureCQAIntents = async ({ caps }) => {
   try {
-    const { answerToChatbotStruct } = await _importIt({ caps })
-    const utterances = Object.values(answerToChatbotStruct).map(({ questions }) => ({
-      name: questions[0],
-      utterances: questions
+    const { Assets } = await _importIt({ caps })
+    const utterances = Assets.Qnas.map(({ Questions }) => ({
+      name: Questions[0],
+      utterances: Questions
     }))
     // first question is the intent
-    const convos = Object.values(answerToChatbotStruct).map(({ answer, questions }) => ({
+    const convos = Assets.Qnas.map(({ Answer, Questions }) => ({
       header: {
-        name: questions[0]
+        name: Questions[0]
       },
       conversation: [
         {
           sender: 'me',
-          messageText: questions[0]
+          messageText: Questions[0]
         },
         {
           sender: 'bot',
-          messageText: answer,
+          messageText: Answer,
           asserters: [
             {
               name: 'INTENT',
-              args: [questions[0]]
+              args: [Questions[0]]
             }
           ]
         }
@@ -155,14 +120,23 @@ const importAzureCQAIntents = async ({ caps }) => {
   }
 }
 
-const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances }, { statusCallback }) => {
+const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances }, third) => {
   try {
-    const { intentToChatbotStruct, zip } = await _importIt({
-      caps
+    const statusCallback = (log, obj) => {
+      obj ? debug(log, obj) : debug(log)
+      if (third.statusCallback) third.statusCallback(log, obj)
+    }
+
+    const chatbotData = await _importIt({
+      caps,
+      statusCallback
     })
     const intentToBotiumStruct = {}
-    for (const { name, utterances: list } of utterances) {
+    for (let { name, utterances: list } of utterances) {
       if (list.length > 0) {
+        if (list[0] !== name) {
+          list = [name, ...list]
+        }
         intentToBotiumStruct[name] = { utterances: list, answer: null }
       }
     }
@@ -179,65 +153,65 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
       intentToBotiumStruct[conversation[0].messageText].answer = conversation[1].messageText
     }
 
-    for (const [intent, struct] of Object.entries(intentToChatbotStruct)) {
+    // removing intents not existing anymore
+    if (uploadmode === 'replace') {
+      chatbotData.Assets.Qnas = chatbotData.Assets.Qnas.filter(({ Questions }) => intentToBotiumStruct[Questions[0]])
+    }
+
+    // merge/replace existing intents
+    const usedIds = {}
+    for (const struct of chatbotData.Assets.Qnas) {
+      const intent = struct.Questions[0]
+      usedIds[`${struct.Id}`] = true
       if (uploadmode === 'replace') {
-        if (!intentToBotiumStruct[intent]) {
-          intentToChatbotStruct[intent] = null
-          continue
-        } else {
-          struct.questions = intentToBotiumStruct[intent].utterances
-        }
+        struct.Questions = intentToBotiumStruct[intent].utterances
       } else {
         for (const utterance of intentToBotiumStruct[intent]?.utterances || []) {
-          if (!struct.questions.find(q => q === utterance)) {
-            struct.questions.push(utterance)
+          if (!struct.Questions.find(q => q === utterance)) {
+            struct.Questions.push(utterance)
           }
         }
       }
       if (intentToBotiumStruct[intent]) {
-        intentToChatbotStruct[intent].answer = intentToBotiumStruct[intent].answer
+        struct.Answer = intentToBotiumStruct[intent].answer
       }
     }
 
+    // adding new intents
+    let nextId = 1
     for (const [intent, { answer, utterances }] of Object.entries(intentToBotiumStruct)) {
-      if (!intentToChatbotStruct[intent]) {
+      if (!chatbotData.Assets.Qnas.find(({ Questions }) => Questions[0] === intent)) {
+        while (usedIds[`${nextId}`]) {
+          nextId++
+        }
+
         if (answer) {
-          intentToChatbotStruct[intent] = {
-            answer,
-            questions: utterances
-          }
+          chatbotData.Assets.Qnas.push({
+            Answer: answer,
+            Questions: utterances,
+            Id: nextId++
+          })
         } else {
           debug(`Skipping utterance struct for intent ${intent} because there is no answer defined`)
         }
       }
     }
 
-    const answers = Object.keys(intentToChatbotStruct).length
-    const questions = Object.values(intentToChatbotStruct).reduce((sum, { questions }) => {
-      sum += questions.length
+    const answers = chatbotData.Assets.Qnas.length
+    const questions = chatbotData.Assets.Qnas.reduce((sum, { Questions }) => {
+      sum += Questions.length
       return sum
     }, 0)
-    debug(`ready to export #answers: ${answers}, #questions: ${questions} details: ${Object.values(intentToChatbotStruct).map(({ answer, questions }) => '/"' + answer + '/" (' + questions.length + ')').join(', ')}`)
-
-    let qnas = 'Question\tAnswer\tSource\tMetadata\tSuggestedQuestions\tIsContextOnly\tPrompts\tQnaId\n'
-    for (const { answer, questions, source = '', metadata = '', suggestedQuestions = '', isContextOnly = '', prompts = '', qnaId = '' } of Object.values(intentToChatbotStruct)) {
-      if (!answer || !questions?.length) {
-        debug(`Skipping invalid entry ${JSON.stringify({ answer, questions })}`)
-      } else {
-        for (const question of questions) {
-          qnas += `${question}\t${answer}\t${source}\t${metadata}\t${suggestedQuestions}\t${isContextOnly}\t${prompts}\t${qnaId}`
-        }
-      }
-    }
-    zip.addFile(QNA_FILE_NAME, Buffer.from(qnas, 'utf8'))
+    const mapped = chatbotData.Assets.Qnas.map(({ Answer, Questions }) => ({ [Answer]: Questions.length }))
+    debug(`Ready to export #answers: ${answers}, #questions: ${questions} details: ${JSON.stringify(mapped)}`)
 
     const requestOptionsExport = {
-      url: `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:import?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=tsv`,
+      url: `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:import?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=json`,
       headers: {
         'Ocp-Apim-Subscription-Key': caps.AZURE_CQA_ENDPOINT_KEY
       },
       method: 'POST',
-      data: zip
+      data: chatbotData
     }
     const responseExport = await axiosCustomError(requestOptionsExport, 'Export failed')
     debug(`Export started. Operation location: "${responseExport.headers['operation-location']}" response: ${JSON.stringify(responseExport.data, null, 2)}`)
@@ -246,7 +220,6 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
       throw new Error(`Operation Location not found in ${JSON.stringify(responseExport.headers)}`)
     }
 
-    debug(`export status request: ${JSON.stringify(requestOptionsExport, null, 2)}`)
     const requestOptionsExportStatus = {
       url: operationLocation,
       headers: {
@@ -255,7 +228,7 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
       method: 'GET'
     }
     let responseExportStatus
-    for (let tries = 0; tries < 10 && (!responseExportStatus || ['notStarted', 'partiallyCompleted', 'running'].includes(responseExportStatus.data.status)); tries++) {
+    for (let tries = 0; tries < 10 * 60 && (!responseExportStatus || ['notStarted', 'partiallyCompleted', 'running'].includes(responseExportStatus.data.status)); tries++) {
       responseExportStatus = await axiosCustomError(requestOptionsExportStatus, 'Export status failed')
       if (responseExportStatus.data.errors?.length > 0) {
         throw new Error(`Export failed with errors: ${JSON.stringify(responseExportStatus.data.errors)}`)
@@ -264,11 +237,14 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
       if (['cancelled', 'cancelling', 'failed'].includes(responseExportStatus.data.status)) {
         throw new Error(`Export failed, job status is: ${responseExportStatus.data.status}`)
       }
+      if (responseExportStatus.data.status !== 'succesful') {
+        statusCallback(`Try #${tries + 1} done. Upload is not finished yet. Waiting 1s.`)
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
     }
     debug(`Last export status: ${JSON.stringify(responseExportStatus.data, null, 2)}`)
   } catch (err) {
-    // TODO
-    throw err//new Error(`Export process failed: ${err.message}`)
+    throw new Error(`Export process failed: ${err.message}`)
   }
 
   debug('export finished')
@@ -288,11 +264,9 @@ module.exports = {
       skipCli: true
     }
   },
-  exportHandler: ({ caps, uploadmode, dataset, language, ...rest } = {}, { convos, utterances } = {}, { statusCallback } = {}) => exportAzureCQAIntents({
+  exportHandler: ({ caps, uploadmode, ...rest } = {}, { convos, utterances } = {}, { statusCallback } = {}) => exportAzureCQAIntents({
     caps,
     uploadmode,
-    dataset,
-    language,
     ...rest
   }, {
     convos,
@@ -308,14 +282,6 @@ module.exports = {
       describe: 'Appending Azure CQA intents and user examples or replace them',
       choices: ['append', 'replace'],
       default: 'append'
-    },
-    dataset: {
-      describe: 'Type of the dataset (Train, or Test)',
-      choices: ['Train', 'Test']
-    },
-    language: {
-      describe: 'Language (like en-us)',
-      type: 'string'
     }
   }
 }

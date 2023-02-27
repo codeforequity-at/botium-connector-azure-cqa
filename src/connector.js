@@ -9,11 +9,13 @@ const Capabilities = {
   AZURE_CQA_ENDPOINT_URL: 'AZURE_CQA_ENDPOINT_URL',
   AZURE_CQA_ENDPOINT_KEY: 'AZURE_CQA_ENDPOINT_KEY',
   AZURE_CQA_PROJECT_NAME: 'AZURE_CQA_PROJECT_NAME',
+  AZURE_CQA_USER_ID: 'AZURE_CQA_USER_ID',
+  // experimental, not tested, optional caps
   AZURE_CQA_DEPLOYMENT_NAME: 'AZURE_CQA_DEPLOYMENT_NAME',
   AZURE_CQA_API_VERSION: 'AZURE_CQA_API_VERSION',
   AZURE_CQA_RANKER_TYPE: 'AZURE_CQA_RANKER_TYPE', // Default or QuestionOnly
-  // experimental, not tested, optional caps
-  AZURE_CQA_USER_ID: 'AZURE_CQA_USER_ID'
+  AZURE_CQA_INCLUDE_UNSTRUCTURED_SOURCES: 'AZURE_CQA_INCLUDE_UNSTRUCTURED_SOURCES',
+  AZURE_CQA_ANSWER_SPAN: 'AZURE_CQA_ANSWER_SPAN'
 }
 
 class BotiumConnectorAzureCQA {
@@ -49,8 +51,10 @@ class BotiumConnectorAzureCQA {
       data: {
         question: messageText,
         userId: this.userId,
-        // donno what is this
-        includeUnstructuredSources: true,
+        includeUnstructuredSources: this.caps.AZURE_CQA_INCLUDE_UNSTRUCTURED_SOURCES || true,
+        answerSpanRequest: {
+          enable: this.caps.AZURE_CQA_ANSWER_SPAN || false
+        },
         context: this.context,
         rankerType: this.caps.AZURE_CQA_RANKER_TYPE || 'Default'
       }
@@ -77,6 +81,9 @@ class BotiumConnectorAzureCQA {
           request: requestOptions,
           response: data
         }
+      }
+      if (data.answers[0].dialog?.prompts?.length) {
+        structuredResponse.buttons = data.answers[0].dialog.prompts.map(({ displayText, qnaId }) => ({ text: displayText, payload: qnaId }))
       }
       this.context = {
         previousQnaId: data.answers[0].id,

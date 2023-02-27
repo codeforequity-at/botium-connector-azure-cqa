@@ -1,0 +1,29 @@
+{
+  "name": "ConnectorTest",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha spec",
+    "download-intents": "botium-connector-azure-clu-cli import --output ./spec/azure-clu-intents",
+    "download-testcases": "botium-connector-azure-clu-cli import --buildconvos --output ./spec/azure-clu-import",
+    "upload-intents": "botium-connector-azure-clu-cli export --input spec/azure-clu-intents --uploadmode replace"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "botium-core": "^1.13.12"
+  },
+  "botium": {
+    "convodirs": [
+      "spec/convo"
+    ],
+    "expandConvos": true,
+    "expandUtterancesToConvos": false
+  },
+  "devDependencies": {
+    "botium-bindings": "latest",
+    "botium-connector-azure-clu": "../../",
+    "mocha": "latest"
+  }
+}

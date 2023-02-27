@@ -1,0 +1,15 @@
+prompt
+
+#me
+Prompt?
+
+#bot
+INTENT Could you show me a prompt?
+BUTTONS You see?|Still see it? It is existing pair
+
+#me
+BUTTON You see?
+
+#bot
+Prompt Pair
+
