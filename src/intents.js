@@ -11,7 +11,7 @@ const axiosCustomError = async (options, msg) => {
 }
 
 const _importIt = async ({ caps, statusCallback = debug }) => {
-  statusCallback('Importing started')
+  statusCallback('Download started')
   const requestOptionsImport = {
     url: `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:export?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=json`,
     headers: {
@@ -48,7 +48,7 @@ const _importIt = async ({ caps, statusCallback = debug }) => {
 
     resultUrl = responseImportStatus.data.resultUrl
     if (!resultUrl) {
-      statusCallback(`Try #${tries + 1} done. Result URI is not ready yet. Waiting 1s.`)
+      statusCallback(`Try #${tries + 1} done. Download is not finished yet. Waiting 1s.`)
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
   }
@@ -126,6 +126,7 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
       obj ? debug(log, obj) : debug(log)
       if (third.statusCallback) third.statusCallback(log, obj)
     }
+    statusCallback('Upload started')
 
     const chatbotData = await _importIt({
       caps,
@@ -172,7 +173,7 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
           }
         }
       }
-      if (intentToBotiumStruct[intent]) {
+      if (intentToBotiumStruct[intent] && intentToBotiumStruct[intent].answer) {
         struct.Answer = intentToBotiumStruct[intent].answer
       }
     }

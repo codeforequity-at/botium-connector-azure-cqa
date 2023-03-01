@@ -105,6 +105,7 @@ module.exports = {
       },
       {
         name: 'AZURE_CQA_ANSWER_SPAN',
+        label: 'Enable Answer Span',
         description: 'Enable Answer Span',
         type: 'string',
         required: false,

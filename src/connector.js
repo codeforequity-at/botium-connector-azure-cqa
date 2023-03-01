@@ -68,7 +68,8 @@ class BotiumConnectorAzureCQA {
     let structuredResponse
     if (data.answers && data.answers.length) {
       const intents = data.answers.map(a => ({
-        name: (a.questions && a.questions.length) ? a.questions[0] : 'N/A',
+        name: (a.questions && a.questions.length) ? a.questions[0] : a.id === -1 ? 'None' : 'N/A',
+        incomprehension: a.id === -1,
         confidence: a.confidenceScore
       }))
       structuredResponse = {
@@ -83,7 +84,7 @@ class BotiumConnectorAzureCQA {
         }
       }
       if (data.answers[0].dialog?.prompts?.length) {
-        structuredResponse.buttons = data.answers[0].dialog.prompts.map(({ displayText, qnaId }) => ({ text: displayText, payload: qnaId }))
+        structuredResponse.buttons = data.answers[0].dialog.prompts.map(({ displayText, qnaId }) => ({ text: displayText }))
       }
       this.context = {
         previousQnaId: data.answers[0].id,
