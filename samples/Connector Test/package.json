@@ -4,10 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "mocha spec",
-    "download-intents": "botium-connector-azure-cqa-cli import --output ./spec/azure-cqa-intents",
-    "download-testcases": "botium-connector-azure-cqa-cli import --buildconvos --output ./spec/azure-cqa-import",
-    "upload-intents": "botium-connector-azure-cqa-cli export --input spec/azure-cqa-intents --uploadmode replace"
+    "postinstall": "cd ../../ && npm install --no-save botium-core",
+    "test": "mocha spec"
   },
   "author": "",
   "license": "ISC",

@@ -4,9 +4,6 @@
   "description": "Botium Connector for Azure Custom Question Answering",
   "main": "dist/botium-connector-azure-cqa-cjs.js",
   "module": "dist/botium-connector-azure-cqa-es.js",
-  "bin": {
-    "botium-connector-botium-connector-azure-cqa-cli": "./bin/cli.js"
-  },
   "scripts": {
     "build": "npm run eslint && rollup -c && cp logo.png dist",
     "eslint": "eslint index.js src",
