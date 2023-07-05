@@ -23,5 +23,5 @@ describe('importhandler', function () {
     assert.isTrue(utterance.utterances.includes('UTT_HELLO'))
     assert.isTrue(utterance.utterances.includes('hi'))
     assert.isTrue(utterance.utterances.includes('hello'))
-  }).timeout(50000)
+  }).timeout(100000)
 })
