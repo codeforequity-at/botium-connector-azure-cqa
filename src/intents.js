@@ -1,10 +1,26 @@
 const debug = require('debug')('botium-connector-azure-cqa-intents')
-const axios = require('axios')
 const DEFAULT_API_VERSION = require('./connector').DEFAULT_API_VERSION
 
-const axiosCustomError = async (options, msg) => {
+const fetchCustomError = async (url, options, msg) => {
   try {
-    return axios(options)
+    const response = await fetch(url, options)
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`${msg}: ${response.status} ${response.statusText} - ${errorText}`)
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    let data
+    if (contentType.includes('application/json')) {
+      data = await response.json()
+    } else {
+      data = await response.text()
+    }
+    return {
+      data,
+      headers: response.headers
+    }
   } catch (err) {
     throw new Error(`${msg}: ${err.message}`)
   }
@@ -12,38 +28,47 @@ const axiosCustomError = async (options, msg) => {
 
 const _importIt = async ({ caps, statusCallback = debug }) => {
   statusCallback('Download started')
-  const requestOptionsImport = {
-    url: `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:export?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=json`,
+  const url = `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:export?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=json`
+
+  const fetchOptionsImport = {
+    method: 'POST',
     headers: {
       'Ocp-Apim-Subscription-Key': caps.AZURE_CQA_ENDPOINT_KEY
-    },
-    method: 'post'
-  }
-  debug(`import request: ${JSON.stringify(requestOptionsImport, null, 2)}`)
-  const responseImport = await axiosCustomError(requestOptionsImport, 'Import failed')
-  const operationLocation = (responseImport && responseImport.headers && responseImport.headers['operation-location']) ? responseImport.headers['operation-location'] : null
-  if (!operationLocation) {
-    throw new Error(`Operation Location not found in ${JSON.stringify(responseImport.headers)}`)
+    }
   }
 
-  debug(`import status request: ${JSON.stringify(requestOptionsImport, null, 2)}`)
-  const requestOptionsImportStatus = {
-    url: operationLocation,
+  debug(`import request: ${JSON.stringify({ url, ...fetchOptionsImport }, null, 2)}`)
+
+  const responseImport = await fetchCustomError(url, fetchOptionsImport, 'Import failed')
+
+  const operationLocation = responseImport && responseImport.headers && responseImport.headers.get('operation-location')
+    ? responseImport.headers.get('operation-location')
+    : null
+  if (!operationLocation) {
+    throw new Error(`Operation Location not found in response headers: ${JSON.stringify(responseImport.headers)}`)
+  }
+
+  debug(`import status request: ${JSON.stringify(url, fetchOptionsImport, null, 2)}`)
+
+  const fetchOptionsImportStatus = {
+    method: 'GET',
     headers: {
       'Ocp-Apim-Subscription-Key': caps.AZURE_CQA_ENDPOINT_KEY
-    },
-    method: 'get'
+    }
   }
   let resultUrl = null
   let responseImportStatus
+
   for (let tries = 0; tries < 10 * 60 && !resultUrl; tries++) {
-    responseImportStatus = await axiosCustomError(requestOptionsImportStatus, 'Import status failed')
+    responseImportStatus = await fetchCustomError(operationLocation, fetchOptionsImportStatus, 'Import status failed')
+
     if (responseImportStatus.data.errors?.length > 0) {
       throw new Error(`Import failed: ${JSON.stringify(responseImportStatus.errors)}`)
     }
 
-    if (['cancelled', 'cancelling', 'failed'].includes(responseImportStatus.data.status)) {
-      throw new Error(`Import failed, job status is: ${responseImportStatus.data.status}`)
+    const status = responseImportStatus.data.status
+    if (['cancelled', 'cancelling', 'failed'].includes(status)) {
+      throw new Error(`Import failed, job status is: ${status}`)
     }
 
     resultUrl = responseImportStatus.data.resultUrl
@@ -52,18 +77,19 @@ const _importIt = async ({ caps, statusCallback = debug }) => {
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
   }
+
   if (!resultUrl) {
     throw new Error(`Failed to retrieve the result URL: ${JSON.stringify(responseImportStatus.data)}`)
   }
-  const requestOptionsDownload = {
-    method: 'get',
-    url: resultUrl,
+
+  const downloadOptions = {
+    method: 'GET',
     headers: {
       'Ocp-Apim-Subscription-Key': caps.AZURE_CQA_ENDPOINT_KEY
     }
   }
 
-  const responseDownload = await axiosCustomError(requestOptionsDownload, 'Download failed')
+  const responseDownload = await fetchCustomError(resultUrl, downloadOptions, 'Download failed')
 
   const answers = responseDownload.data.Assets.Qnas.length
   const questions = responseDownload.data.Assets.Qnas.reduce((sum, { Questions }) => {
@@ -71,6 +97,7 @@ const _importIt = async ({ caps, statusCallback = debug }) => {
     return sum
   }, 0)
   const mapped = responseDownload.data.Assets.Qnas.map(({ Answer, Questions }) => ({ [Answer]: Questions.length }))
+
   debug(`Imported #answers: ${answers}, #questions: ${questions} details: ${JSON.stringify(mapped)}`)
 
   return responseDownload.data
@@ -206,17 +233,19 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
     const mapped = chatbotData.Assets.Qnas.map(({ Answer, Questions }) => ({ [Answer]: Questions.length }))
     debug(`Ready to export #answers: ${answers}, #questions: ${questions} details: ${JSON.stringify(mapped)}`)
 
-    const requestOptionsExport = {
-      url: `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:import?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=json`,
-      headers: {
-        'Ocp-Apim-Subscription-Key': caps.AZURE_CQA_ENDPOINT_KEY
-      },
+    const url = `${caps.AZURE_CQA_ENDPOINT_URL}/language/query-knowledgebases/projects/${caps.AZURE_CQA_PROJECT_NAME}/:import?api-version=${caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&format=json`
+
+    const fetchOptionsExport = {
       method: 'POST',
-      data: chatbotData
+      headers: {
+        'Ocp-Apim-Subscription-Key': caps.AZURE_CQA_ENDPOINT_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(chatbotData)
     }
-    const responseExport = await axiosCustomError(requestOptionsExport, 'Export failed')
-    debug(`Export started. Operation location: "${responseExport.headers['operation-location']}" response: ${JSON.stringify(responseExport.data, null, 2)}`)
-    const operationLocation = responseExport.headers['operation-location']
+    const responseExport = await fetchCustomError(url, fetchOptionsExport, 'Export failed')
+    debug(`Export started. Operation location: "${responseExport.headers?.get('operation-location')}" response: ${JSON.stringify(responseExport.data, null, 2)}`)
+    const operationLocation = responseExport.headers?.get('operation-location')
     if (!operationLocation) {
       throw new Error(`Operation Location not found in ${JSON.stringify(responseExport.headers)}`)
     }
@@ -230,7 +259,7 @@ const exportAzureCQAIntents = async ({ caps, uploadmode }, { convos, utterances 
     }
     let responseExportStatus
     for (let tries = 0; tries < 10 * 60 && (!responseExportStatus || ['notStarted', 'partiallyCompleted', 'running'].includes(responseExportStatus.data.status)); tries++) {
-      responseExportStatus = await axiosCustomError(requestOptionsExportStatus, 'Export status failed')
+      responseExportStatus = await fetchCustomError(operationLocation, requestOptionsExportStatus, 'Export status failed')
       if (responseExportStatus.data.errors?.length > 0) {
         throw new Error(`Export failed with errors: ${JSON.stringify(responseExportStatus.data.errors)}`)
       }
