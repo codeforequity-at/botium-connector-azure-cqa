@@ -21,7 +21,7 @@ describe('connector', function () {
   it('should successfully get an answer for say hello', async function () {
     await this.connector.UserSays({ messageText: 'Hello' })
     const botMsg = await this.botMsgPromise
-    assert.equal(botMsg?.nlp?.intent?.name, 'Yo dude')
+    assert.equal(botMsg?.nlp?.intent?.name, 'UTT_HELLO')
   }).timeout(10000)
 
   afterEach(async function () {

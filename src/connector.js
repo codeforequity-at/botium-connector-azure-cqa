@@ -58,7 +58,7 @@ class BotiumConnectorAzureCQA {
       method: 'POST',
       headers: {
         'Ocp-Apim-Subscription-Key': this.caps.AZURE_CQA_ENDPOINT_KEY,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(body)
     }
