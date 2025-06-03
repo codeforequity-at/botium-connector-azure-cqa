@@ -1,6 +1,5 @@
 const debug = require('debug')('botium-connector-azure-cqa')
 const { v4: uuidv4 } = require('uuid')
-const axios = require('axios')
 
 const DEFAULT_API_VERSION = '2021-10-01'
 const DEFAULT_DEPLOYMENT_NAME = 'production'
@@ -42,26 +41,38 @@ class BotiumConnectorAzureCQA {
   }
 
   async UserSays ({ messageText }) {
-    const requestOptions = {
-      url: `${this.caps.AZURE_CQA_ENDPOINT_URL}/language/:query-knowledgebases?projectName=${this.caps.AZURE_CQA_PROJECT_NAME}&api-version=${this.caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&deploymentName=${this.caps.AZURE_CQA_DEPLOYMENT_NAME || DEFAULT_DEPLOYMENT_NAME}`,
-      headers: {
-        'Ocp-Apim-Subscription-Key': this.caps.AZURE_CQA_ENDPOINT_KEY
-      },
-      method: 'POST',
-      data: {
-        question: messageText,
-        userId: this.userId,
-        includeUnstructuredSources: this.caps.AZURE_CQA_INCLUDE_UNSTRUCTURED_SOURCES || true,
-        answerSpanRequest: {
-          enable: this.caps.AZURE_CQA_ANSWER_SPAN || false
-        },
-        context: this.context,
-        rankerType: this.caps.AZURE_CQA_RANKER_TYPE || 'Default'
-      }
-    }
-    debug(`Request: ${JSON.stringify(requestOptions, null, 2)}`)
+    const url = `${this.caps.AZURE_CQA_ENDPOINT_URL}/language/:query-knowledgebases?projectName=${this.caps.AZURE_CQA_PROJECT_NAME}&api-version=${this.caps.AZURE_CQA_API_VERSION || DEFAULT_API_VERSION}&deploymentName=${this.caps.AZURE_CQA_DEPLOYMENT_NAME || DEFAULT_DEPLOYMENT_NAME}`
 
-    const { data } = await axios(requestOptions)
+    const body = {
+      question: messageText,
+      userId: this.userId,
+      includeUnstructuredSources: this.caps.AZURE_CQA_INCLUDE_UNSTRUCTURED_SOURCES || true,
+      answerSpanRequest: {
+        enable: this.caps.AZURE_CQA_ANSWER_SPAN || false
+      },
+      context: this.context,
+      rankerType: this.caps.AZURE_CQA_RANKER_TYPE || 'Default'
+    }
+
+    const fetchOptions = {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': this.caps.AZURE_CQA_ENDPOINT_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }
+
+    debug(`Request: ${JSON.stringify({ url, ...fetchOptions }, null, 2)}`)
+
+    const response = await fetch(url, fetchOptions)
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Fetch failed with status ${response.status}: ${errorText}`)
+    }
+
+    const data = await response.json()
 
     debug(`Response: ${JSON.stringify(data, null, 2)}`)
 
@@ -79,7 +90,7 @@ class BotiumConnectorAzureCQA {
           intent: Object.assign({}, intents[0], { intents: intents.slice(1) })
         },
         sourceData: {
-          request: requestOptions,
+          request: fetchOptions,
           response: data
         }
       }

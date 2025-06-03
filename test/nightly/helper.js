@@ -10,6 +10,5 @@ module.exports.readCaps = () => {
     const elementToMerge = element.replace(/^BOTIUM_/, '')
     caps[elementToMerge] = process.env[element]
   })
-
   return caps
 }
